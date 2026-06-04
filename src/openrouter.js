@@ -2,13 +2,9 @@
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-// Free tier tries models in order until one succeeds; Pro gets a higher quality one.
-const MODELS_FREE = [
-  'google/gemma-4-26b-a4b-it:free',
-  'google/gemma-4-31b-it:free',
-  'moonshotai/kimi-k2.6:free',
-];
-const MODEL_PRO = 'google/gemini-2.0-flash-001';
+// Free tier uses a cheap reliable model; Pro gets a higher quality one.
+const MODEL_FREE = 'google/gemini-2.0-flash-lite';
+const MODEL_PRO  = 'google/gemini-2.0-flash-001';
 
 /**
  * Call OpenRouter with a vision prompt and return the raw text response.
@@ -19,34 +15,26 @@ const MODEL_PRO = 'google/gemini-2.0-flash-001';
  * @returns {Promise<string>}
  */
 async function callOpenRouter(messages, isPro = false) {
-  const models = isPro ? [MODEL_PRO] : MODELS_FREE;
+  const res = await fetch(OPENROUTER_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://relay.smartmedia.blu8print.com',
+    },
+    body: JSON.stringify({
+      model: isPro ? MODEL_PRO : MODEL_FREE,
+      messages,
+    }),
+  });
 
-  let lastError;
-  for (const model of models) {
-    const res = await fetch(OPENROUTER_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://relay.smartmedia.blu8print.com',
-      },
-      body: JSON.stringify({ model, messages }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      return data.choices?.[0]?.message?.content ?? '';
-    }
-
+  if (!res.ok) {
     const errText = await res.text();
-    lastError = new Error(`OpenRouter ${res.status}: ${errText.slice(0, 200)}`);
-
-    // Only retry on 429 (rate limit) or 404 (model unavailable); fail fast on others.
-    if (res.status !== 429 && res.status !== 404) break;
-    console.warn(`[openrouter] model ${model} failed (${res.status}), trying next...`);
+    throw new Error(`OpenRouter ${res.status}: ${errText.slice(0, 200)}`);
   }
 
-  throw lastError;
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content ?? '';
 }
 
 /**

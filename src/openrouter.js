@@ -2,39 +2,54 @@
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-// Free tier uses a cheap reliable model; Pro gets a higher quality one.
-const MODEL_FREE = 'google/gemini-2.0-flash-lite';
-const MODEL_PRO  = 'google/gemini-2.0-flash-001';
+// Ordered fallback lists — first available/non-rate-limited model wins.
+const MODELS_FREE = [
+  'google/gemini-3.1-flash-lite-20260507',
+  'google/gemini-3.1-flash-lite-preview-20260303',
+  '~google/gemini-flash-latest',
+];
+const MODELS_PRO = [
+  'google/gemini-3.5-flash-20260519',
+  '~google/gemini-flash-latest',
+];
 
 /**
  * Call OpenRouter with a vision prompt and return the raw text response.
- * For free tier, tries each model in MODELS_FREE until one succeeds.
+ * Tries each model in order, falling back on 400/404/429.
  *
  * @param {Array} messages  — OpenRouter messages array
  * @param {boolean} isPro
  * @returns {Promise<string>}
  */
 async function callOpenRouter(messages, isPro = false) {
-  const res = await fetch(OPENROUTER_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://relay.smartmedia.blu8print.com',
-    },
-    body: JSON.stringify({
-      model: isPro ? MODEL_PRO : MODEL_FREE,
-      messages,
-    }),
-  });
+  const models = isPro ? MODELS_PRO : MODELS_FREE;
+  let lastError;
 
-  if (!res.ok) {
+  for (const model of models) {
+    const res = await fetch(OPENROUTER_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://relay.smartmedia.blu8print.com',
+      },
+      body: JSON.stringify({ model, messages }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      return data.choices?.[0]?.message?.content ?? '';
+    }
+
     const errText = await res.text();
-    throw new Error(`OpenRouter ${res.status}: ${errText.slice(0, 200)}`);
+    lastError = new Error(`OpenRouter ${res.status}: ${errText.slice(0, 200)}`);
+
+    // Retry on model unavailable (400/404) or upstream rate limit (429).
+    if (![400, 404, 429].includes(res.status)) break;
+    console.warn(`[openrouter] ${model} failed (${res.status}), trying next...`);
   }
 
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content ?? '';
+  throw lastError;
 }
 
 /**

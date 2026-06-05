@@ -56,7 +56,8 @@ async function getUsage(hostname) {
   const redis = getRedis();
   const key = PREFIX + hostname + ':' + monthKey();
   const val = await redis.get(key);
-  return val ? parseInt(val, 10) : 0;
+  const used = val ? parseInt(val, 10) : 0;
+  return { used, limit: FREE_LIMIT };
 }
 
 module.exports = { checkRateLimit, getUsage };

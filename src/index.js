@@ -4,7 +4,7 @@ require('dotenv').config();
 
 const express = require('express');
 const { isValidLicense } = require('./license');
-const { checkRateLimit } = require('./rateLimit');
+const { checkRateLimit, getUsage } = require('./rateLimit');
 const { analyzeImage, extractKeywords, fallbackMeta } = require('./openrouter');
 
 const app  = express();
@@ -144,6 +144,30 @@ app.post('/extract-keywords', async (req, res) => {
     console.error('[/extract-keywords] OpenRouter error:', err.message);
     return res.json({ keywords: [] });
   }
+});
+
+// ---------------------------------------------------------------------------
+// GET /usage  — current month usage for a site (non-destructive)
+// ---------------------------------------------------------------------------
+
+app.get('/usage', async (req, res) => {
+  const { site_url = '', license_key = '' } = req.query;
+
+  const hostname = extractHostname(site_url);
+  if (!hostname) {
+    return res.status(400).json({ error: 'bad_request', message: 'Missing or invalid "site_url".' });
+  }
+
+  if (license_key) {
+    const valid = await isValidLicense(license_key, hostname);
+    if (!valid) {
+      return res.status(403).json({ error: 'invalid_license', message: 'Invalid license key.' });
+    }
+    return res.json({ is_pro: true, used: null, limit: null });
+  }
+
+  const { used, limit } = await getUsage(hostname);
+  return res.json({ is_pro: false, used, limit });
 });
 
 // ---------------------------------------------------------------------------
